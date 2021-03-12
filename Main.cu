@@ -13,7 +13,7 @@
     } while (0)
 
 
-__global__ void checkVoxel(float* cameras, cuda::PtrStepSz<uchar3>* imgs, int* result, const int resolution, const int camCount, clock_t* time, int w, int h) {
+__global__ void checkVoxel(float* cameras, uchar3* imgs, int* result, const int resolution, const int camCount, clock_t* time, int w, int h) {
 	clock_t start = clock();
 	int idx = threadIdx.x + blockDim.x * blockIdx.x;
 	if (idx < (resolution * resolution * resolution)) {
@@ -28,12 +28,13 @@ __global__ void checkVoxel(float* cameras, cuda::PtrStepSz<uchar3>* imgs, int* r
 		float posw = 1.0;
 		int count = 0;
 		float tt = 0.0f;
+		result[idx] = 0;
 		for (int i = 0; i < camCount; i++) {
-
 			float projectW = cameras[i * 16 + 3 * 4] * posx + cameras[i * 16 + 3 * 4 + 1] * posy + cameras[i * 16 + 3 * 4 + 2] * posz + cameras[i * 16 + 3 * 4 + 3] * posw;
 			float projectX = (cameras[i * 16] * posx + cameras[i * 16 + 1] * posy + cameras[i * 16 + 2] * posz + cameras[i * 16 + 3] * posw) / projectW;
 			float projectY = (cameras[i * 16 + 1 * 4] * posx + cameras[i * 16 + 1 * 4 + 1] * posy + cameras[i * 16 + 1 * 4 + 2] * posz + cameras[i * 16 + 1 * 4 + 3] * posw) / projectW;
 			float projectZ = (cameras[i * 16 + 2 * 4] * posx + cameras[i * 16 + 2 * 4 + 1] * posy + cameras[i * 16 + 2 * 4 + 2] * posz + cameras[i * 16 + 2 * 4 + 3] * posw) / projectW;
+
 
 			float u = projectY * 0.5 + 0.5;
 			float v = projectX * 0.5 + 0.5;
@@ -41,19 +42,32 @@ __global__ void checkVoxel(float* cameras, cuda::PtrStepSz<uchar3>* imgs, int* r
 
 			if (u <= 1.0 && u >= 0.0 && v <= 1.0 && v >= 0.0) {
 				u = 1 - u;
-				float db = imgs[i](int(u* w), int(h* v)).x - 39;
-				float dg = imgs[i](int(u* w), int(h* v)).y - 135;
-				float dr = imgs[i](int(u* w), int(h* v)).z - 39;
-				if ((sqrt(db * db + dg * dg + dr * dr) > 1))
+				/*
+				uint db = (imgs[0](int(u* w), int(h* v)).x);
+				uint dg = (imgs[0](int(u* w), int(h* v)).y);
+				uint dr = (imgs[0](int(u* w), int(h* v)).z);
+				*/
+				int xIndex = u * w;
+				int yIndex = h * v;
+
+				int db = imgs[i * h * w + xIndex * h + yIndex].x - 39;
+				int dg = imgs[i * h * w + xIndex * h + yIndex].y - 135;
+				int dr = imgs[i * h * w + xIndex * h + yIndex].z - 39;
+				float pixelDiff = db * db + dg * dg + dr * dr;
+				if ((sqrt(pixelDiff) > 1)) {
 					count += 1;
+				}
 			}
 		}
 		if (count == camCount) result[idx] = 1;
 		else result[idx] = 0;
+		/*
+		result[idx] = count;
+		*/
 	}
 	else {
 		//error
-		result[idx] = 9;
+		result[idx] = -1;
 	}
 	*time = clock() - start;
 }
@@ -73,7 +87,7 @@ int main(int argc, char** argv) {
 	Json data = loadJson("camera.json");
 	data["visualHull"] = "";
 
-	for (int i = 0; i < 7; i++) {
+	for (int i = 0; i < 1; i++) {
 		string fileName = visualHull(i, data["camera"]);
 		cout << "before ," << data["visualHull"] << endl;
 		string s = data["visualHull"];
@@ -102,10 +116,11 @@ string visualHull(int idx, Json cams) {
 	//params
 	string imgFolder = "D:/lab/Visuallhull-cuda/StreamingAssets";
 	int resolution = 128;
-	int imgWidth, imgHeigh;
+	int imgWidth = 4096, imgHeigh = 4096;
 	vector<Mat> silhouetteImgs;
 
 	int camCount = ceil(cams.size() / 3);
+	camCount = 1;
 
 	//initial  
 
@@ -115,33 +130,10 @@ string visualHull(int idx, Json cams) {
 
 	//img
 	cuda::PtrStepSz<uchar3>* localImgs = (cuda::PtrStepSz<uchar3>*)malloc(camCount * sizeof(cuda::PtrStepSz<uchar3>));
-
+	uchar3* forceImg = (uchar3*)malloc(camCount * imgWidth * imgHeigh * sizeof(uchar3));
 
 	//read image & camera pos
 	for (int i = 0; i < camCount; i++) {
-		//cout << cams[i] << '\n';
-		//cout << (double)cams[i]["world2screenMat"]["e00"] << endl;
-		/*
-		camParamsAry[i / 3][0][0] = (float)cams[i]["world2screenMat"]["e00"];
-		camParamsAry[i / 3][0][1] = (float)cams[i]["world2screenMat"]["e01"];
-		camParamsAry[i / 3][0][2] = (float)cams[i]["world2screenMat"]["e02"];
-		camParamsAry[i / 3][0][3] = (float)cams[i]["world2screenMat"]["e03"];
-
-		camParamsAry[i / 3][1][0] = (float)cams[i]["world2screenMat"]["e10"];
-		camParamsAry[i / 3][1][1] = (float)cams[i]["world2screenMat"]["e11"];
-		camParamsAry[i / 3][1][2] = (float)cams[i]["world2screenMat"]["e12"];
-		camParamsAry[i / 3][1][3] = (float)cams[i]["world2screenMat"]["e13"];
-
-		camParamsAry[i / 3][2][0] = (float)cams[i]["world2screenMat"]["e20"];
-		camParamsAry[i / 3][2][1] = (float)cams[i]["world2screenMat"]["e21"];
-		camParamsAry[i / 3][2][2] = (float)cams[i]["world2screenMat"]["e22"];
-		camParamsAry[i / 3][2][3] = (float)cams[i]["world2screenMat"]["e23"];
-
-		camParamsAry[i / 3][3][0] = (float)cams[i]["world2screenMat"]["e30"];
-		camParamsAry[i / 3][3][1] = (float)cams[i]["world2screenMat"]["e31"];
-		camParamsAry[i / 3][3][2] = (float)cams[i]["world2screenMat"]["e32"];
-		camParamsAry[i / 3][3][3] = (float)cams[i]["world2screenMat"]["e33"];
-		*/
 
 		camAry[i * 16] = (float)cams[i * 3]["world2screenMat"]["e00"];
 		camAry[i * 16 + 1] = (float)cams[i * 3]["world2screenMat"]["e01"];
@@ -163,7 +155,6 @@ string visualHull(int idx, Json cams) {
 		camAry[i * 16 + 3 * 4 + 2] = (float)cams[i * 3]["world2screenMat"]["e32"];
 		camAry[i * 16 + 3 * 4 + 3] = (float)cams[i * 3]["world2screenMat"]["e33"];
 
-
 		//image
 
 		//remove first character
@@ -174,23 +165,32 @@ string visualHull(int idx, Json cams) {
 		cout << path << endl;
 		Mat img;
 		img = MreadImage(path);
-		cout << "imread complete" << endl;
+		//cout << "imread complete" << endl;
 		if (img.empty()) {
 			cout << "read null" << endl;
 			system("pause");
 		}
+		/*
+		imshow("test", img);
+		waitKey(0);
+		cout << type2str(img.type());
+		system("pause");
+		*/
 		cuda::GpuMat GPU_img;
 		cv::Size s = img.size();
 		imgWidth = s.width;
 		imgHeigh = s.height;
-		cout << "mat upload" << imgWidth << "," << imgHeigh << endl;
+		for (int w = 0; w < imgWidth; w++) {
+			for (int h = 0; h < imgHeigh; h++) {
+				uchar3 pixel;
+				pixel.x = img.at<Vec3b>(w, h)[0];
+				pixel.y = img.at<Vec3b>(w, h)[1];
+				pixel.z = img.at<Vec3b>(w, h)[2];
+				forceImg[i * imgWidth * imgHeigh + w * imgHeigh + h] = pixel;
+			}
+		}
 		//system("pause");
-		GPU_img.upload(img);
-		localImgs[i] = GPU_img;
-
 		//cout << "mat upload complete" << endl;
-
-
 
 	}
 
@@ -241,7 +241,7 @@ string visualHull(int idx, Json cams) {
 
 	}
 	*/
-	cout << "read complete" << endl;
+	//cout << "read complete" << endl;
 	//system("pause");
 
 	cout << "resolution : " << resolution << endl;
@@ -252,10 +252,10 @@ string visualHull(int idx, Json cams) {
 	cudaCheckErrors("cuda malloc cam params");
 	cudaMemcpy(gpuCamParams, camAry, camCount * 4 * 4 * sizeof(float), cudaMemcpyHostToDevice);
 
-	cuda::PtrStepSz<uchar3>* gpuImgs;
-	cudaMalloc(&gpuImgs, camCount * sizeof(cuda::PtrStepSz<uchar3>));
+	uchar3* gpuImgs;
+	cudaMalloc(&gpuImgs, camCount * imgWidth * imgHeigh * sizeof(uchar3));
 	cudaCheckErrors("cuda malloc gpu img");
-	cudaMemcpy(gpuImgs, localImgs, camCount * sizeof(cuda::PtrStepSz<uchar3>), cudaMemcpyHostToDevice);
+	cudaMemcpy(gpuImgs, forceImg, camCount * imgHeigh * imgWidth * sizeof(uchar3), cudaMemcpyHostToDevice);
 
 
 	//alloc space for result(on GPU)
@@ -265,12 +265,14 @@ string visualHull(int idx, Json cams) {
 	int threads_per_block = 128;
 	int blocks_per_grid = ceil(pow(resolution, 3) / threads_per_block);
 
-
+	cout << "ready calc" << endl;
+	//system("pause");
 	//calc
 	clock_t* time;
 	cudaMalloc(&time, sizeof(clock_t));
 	checkVoxel << <blocks_per_grid, threads_per_block >> > (gpuCamParams, gpuImgs, gpuResult, resolution, camCount, time, imgWidth, imgHeigh);
-
+	cout << "calc" << endl;
+	//system("pause");
 	//sync
 	cudaDeviceSynchronize();
 	cudaCheckErrors("cuda sync");
@@ -296,7 +298,7 @@ string visualHull(int idx, Json cams) {
 		file << localResult[i] << endl;
 		//cout << localResult[i] << endl;
 	}
-	cout << "save txt complete" << endl;
+	//cout << "save txt complete" << endl;
 	//TODO:
 	//render result
 
