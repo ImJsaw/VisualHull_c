@@ -12,26 +12,24 @@
         } \
     } while (0)
 
-
-__global__ void checkVoxel(float* cameras, uchar3* imgs, int* result, const int resolution, const int camCount, clock_t* time, int w, int h) {
+//__global__ void checkVoxel(float* cameras, uchar3 * imgs, int* result, const int resolution, const int camCount, clock_t * time, int w, int h, uchar3 * imgs_v) {
+__global__ void checkVoxel(float* cameras, uchar3 * imgs, int* result, const int resolution, const int camCount, clock_t * time, int w, int h) {
 	clock_t start = clock();
 	int idx = threadIdx.x + blockDim.x * blockIdx.x;
 	if (idx < (resolution * resolution * resolution)) {
 		float z = idx / (resolution * resolution);
-		int zRemain = idx % (resolution * resolution);
+		float zRemain = float(idx % (resolution * resolution));
 		float y = resolution - zRemain / resolution;
-		int x = idx % resolution;
+		float x = (float)(idx % resolution);
 
 		float posx = (x / resolution - 0.5) * 4;
 		float posy = (y / resolution - 0.5) * 4;
 		float posz = (z / resolution - 0.5) * 4;
 		float posw = 1.0;
 		int count = 0;
-		float tt = 0.0f;
-		result[idx] = 0;
 		for (int i = 0; i < camCount; i++) {
 			float projectW = cameras[i * 16 + 3 * 4] * posx + cameras[i * 16 + 3 * 4 + 1] * posy + cameras[i * 16 + 3 * 4 + 2] * posz + cameras[i * 16 + 3 * 4 + 3] * posw;
-			float projectX = (cameras[i * 16] * posx + cameras[i * 16 + 1] * posy + cameras[i * 16 + 2] * posz + cameras[i * 16 + 3] * posw) / projectW;
+			float projectX = (cameras[i * 16]		  * posx + cameras[i * 16 + 1]		   * posy + cameras[i * 16 + 2]		   * posz + cameras[i * 16 + 3]			* posw) / projectW;
 			float projectY = (cameras[i * 16 + 1 * 4] * posx + cameras[i * 16 + 1 * 4 + 1] * posy + cameras[i * 16 + 1 * 4 + 2] * posz + cameras[i * 16 + 1 * 4 + 3] * posw) / projectW;
 			float projectZ = (cameras[i * 16 + 2 * 4] * posx + cameras[i * 16 + 2 * 4 + 1] * posy + cameras[i * 16 + 2 * 4 + 2] * posz + cameras[i * 16 + 2 * 4 + 3] * posw) / projectW;
 
@@ -47,54 +45,60 @@ __global__ void checkVoxel(float* cameras, uchar3* imgs, int* result, const int 
 				uint dg = (imgs[0](int(u* w), int(h* v)).y);
 				uint dr = (imgs[0](int(u* w), int(h* v)).z);
 				*/
-				int xIndex = u * w;
-				int yIndex = h * v;
+				int yIndex = u * w;
+				int xIndex = h * v;
+				//count = i * h * w + xIndex * h + yIndex;
+				int db = imgs[i * h * w + yIndex * h + xIndex].x - 39;
+				int dg = imgs[i * h * w + yIndex * h + xIndex].y - 135;
+				int dr = imgs[i * h * w + yIndex * h + xIndex].z - 39;
+				//imgs_v[i * h * w + xIndex * h + yIndex] = imgs[i * h * w + xIndex * h + yIndex];
 
-				int db = imgs[i * h * w + xIndex * h + yIndex].x - 39;
-				int dg = imgs[i * h * w + xIndex * h + yIndex].y - 135;
-				int dr = imgs[i * h * w + xIndex * h + yIndex].z - 39;
 				float pixelDiff = db * db + dg * dg + dr * dr;
-				if ((sqrt(pixelDiff) > 1)) {
+				if (sqrt(pixelDiff) > 1 && point_z-(imgs[i * h * w + yIndex * h + xIndex].x / 255)>0) {
 					count += 1;
 				}
+				/*
+				*/
 			}
 		}
 		if (count == camCount) result[idx] = 1;
 		else result[idx] = 0;
-		/*
-		result[idx] = count;
-		*/
+		//result[idx] = count;
 	}
 	else {
 		//error
 		result[idx] = -1;
 	}
+	//check correct pass image
+	/*
+	if (idx < (camCount * w*h)) {
+		imgs_v[idx] = imgs[idx];
+	}
+	*/
 	*time = clock() - start;
 }
 
 cv::Mat MreadImage(const std::string& fileName)
 {
-	clock_t startTime = clock();
 	cv::Mat mImg = cv::imread(fileName);
-	clock_t endTime = clock();
-
-	std::cout << "Time to read image: " << (float)(endTime - startTime) / (float)CLOCKS_PER_SEC << std::endl;
 	return mImg;
 }
 
+string imgFolder = "D:/lab/Visuallhull-cuda/StreamingAssets/";
+
 int main(int argc, char** argv) {
 
-	Json data = loadJson("camera.json");
+	Json data = loadJson(imgFolder+"camera.json");
 	data["visualHull"] = "";
 
 	for (int i = 0; i < 1; i++) {
 		string fileName = visualHull(i, data["camera"]);
-		cout << "before ," << data["visualHull"] << endl;
+		//cout << "before ," << data["visualHull"] << endl;
 		string s = data["visualHull"];
 		data["visualHull"] = s + fileName;
-		cout << "after ," << data["visualHull"] << endl;
+		//cout << "after ," << data["visualHull"] << endl;
 	}
-	system("pause");
+	//system("pause");
 	//TODO
 	writeJson();
 
@@ -114,15 +118,15 @@ Json loadJson(string fileName) {
 string visualHull(int idx, Json cams) {
 	//cout << "idx" << idx << endl;
 	//params
-	string imgFolder = "D:/lab/Visuallhull-cuda/StreamingAssets";
-	int resolution = 128;
-	int imgWidth = 4096, imgHeigh = 4096;
-	vector<Mat> silhouetteImgs;
+	int resolution = 512;
+	int imgWidth = 1024, imgHeigh = 1024;
 
-	int camCount = ceil(cams.size() / 3);
-	camCount = 1;
+	int camCount = cams.size();
+	//camCount = 2;
 
 	//initial  
+	clock_t start_time = clock();
+	clock_t end_time;
 
 	float* camAry;
 
@@ -135,34 +139,33 @@ string visualHull(int idx, Json cams) {
 	//read image & camera pos
 	for (int i = 0; i < camCount; i++) {
 
-		camAry[i * 16] = (float)cams[i * 3]["world2screenMat"]["e00"];
-		camAry[i * 16 + 1] = (float)cams[i * 3]["world2screenMat"]["e01"];
-		camAry[i * 16 + 2] = (float)cams[i * 3]["world2screenMat"]["e02"];
-		camAry[i * 16 + 3] = (float)cams[i * 3]["world2screenMat"]["e03"];
+		camAry[i * 16] = (float)cams[i ]["world2screenMat"]["e00"];
+		camAry[i * 16 + 1] = (float)cams[i]["world2screenMat"]["e01"];
+		camAry[i * 16 + 2] = (float)cams[i]["world2screenMat"]["e02"];
+		camAry[i * 16 + 3] = (float)cams[i]["world2screenMat"]["e03"];
 
-		camAry[i * 16 + 1 * 4] = (float)cams[i * 3]["world2screenMat"]["e10"];
-		camAry[i * 16 + 1 * 4 + 1] = (float)cams[i * 3]["world2screenMat"]["e11"];
-		camAry[i * 16 + 1 * 4 + 2] = (float)cams[i * 3]["world2screenMat"]["e12"];
-		camAry[i * 16 + 1 * 4 + 3] = (float)cams[i * 3]["world2screenMat"]["e13"];
+		camAry[i * 16 + 1 * 4] = (float)cams[i ]["world2screenMat"]["e10"];
+		camAry[i * 16 + 1 * 4 + 1] = (float)cams[i ]["world2screenMat"]["e11"];
+		camAry[i * 16 + 1 * 4 + 2] = (float)cams[i ]["world2screenMat"]["e12"];
+		camAry[i * 16 + 1 * 4 + 3] = (float)cams[i ]["world2screenMat"]["e13"];
 
-		camAry[i * 16 + 2 * 4] = (float)cams[i * 3]["world2screenMat"]["e20"];
-		camAry[i * 16 + 2 * 4 + 1] = (float)cams[i * 3]["world2screenMat"]["e21"];
-		camAry[i * 16 + 2 * 4 + 2] = (float)cams[i * 3]["world2screenMat"]["e22"];
-		camAry[i * 16 + 2 * 4 + 3] = (float)cams[i * 3]["world2screenMat"]["e23"];
+		camAry[i * 16 + 2 * 4] = (float)cams[i ]["world2screenMat"]["e20"];
+		camAry[i * 16 + 2 * 4 + 1] = (float)cams[i ]["world2screenMat"]["e21"];
+		camAry[i * 16 + 2 * 4 + 2] = (float)cams[i ]["world2screenMat"]["e22"];
+		camAry[i * 16 + 2 * 4 + 3] = (float)cams[i ]["world2screenMat"]["e23"];
 
-		camAry[i * 16 + 3 * 4] = (float)cams[i * 3]["world2screenMat"]["e30"];
-		camAry[i * 16 + 3 * 4 + 1] = (float)cams[i * 3]["world2screenMat"]["e31"];
-		camAry[i * 16 + 3 * 4 + 2] = (float)cams[i * 3]["world2screenMat"]["e32"];
-		camAry[i * 16 + 3 * 4 + 3] = (float)cams[i * 3]["world2screenMat"]["e33"];
-
+		camAry[i * 16 + 3 * 4] = (float)cams[i ]["world2screenMat"]["e30"];
+		camAry[i * 16 + 3 * 4 + 1] = (float)cams[i ]["world2screenMat"]["e31"];
+		camAry[i * 16 + 3 * 4 + 2] = (float)cams[i ]["world2screenMat"]["e32"];
+		camAry[i * 16 + 3 * 4 + 3] = (float)cams[i ]["world2screenMat"]["e33"];
 		//image
 
 		//remove first character
-		string imgName = cams[i * 3]["img"][idx];
+		string imgName = cams[i ]["img"][idx];
 		imgName = imgName.substr(1, imgName.size() - 1);
 		string path = imgFolder + imgName;
 
-		cout << path << endl;
+		//cout << path << endl;
 		Mat img;
 		img = MreadImage(path);
 		//cout << "imread complete" << endl;
@@ -173,13 +176,11 @@ string visualHull(int idx, Json cams) {
 		/*
 		imshow("test", img);
 		waitKey(0);
-		cout << type2str(img.type());
-		system("pause");
 		*/
-		cuda::GpuMat GPU_img;
 		cv::Size s = img.size();
 		imgWidth = s.width;
 		imgHeigh = s.height;
+		
 		for (int w = 0; w < imgWidth; w++) {
 			for (int h = 0; h < imgHeigh; h++) {
 				uchar3 pixel;
@@ -189,63 +190,36 @@ string visualHull(int idx, Json cams) {
 				forceImg[i * imgWidth * imgHeigh + w * imgHeigh + h] = pixel;
 			}
 		}
-		//system("pause");
-		//cout << "mat upload complete" << endl;
+		//cout << "pic size: width" << imgWidth << ", heigh" << imgHeigh << endl;
+		//check pic 
+		/*
+		imshow("test", img);
+		waitKey(0);
 
-	}
-
-	/*
-	vector<vector<vector<double>>> camParams;
-	for (int i = 0; i < camCount; i++) {
-		if (i % 3 == 0) {
-			//cout << cams[i] << '\n';
-			vector<vector<double>> curCamParams;
-
-			vector<double> curCamParam0;
-			curCamParam0.push_back(cams[i]["world2screenMat"]["e00"]);
-			curCamParam0.push_back(cams[i]["world2screenMat"]["e01"]);
-			curCamParam0.push_back(cams[i]["world2screenMat"]["e02"]);
-			curCamParam0.push_back(cams[i]["world2screenMat"]["e03"]);
-			vector<double> curCamParam1;
-			curCamParam1.push_back(cams[i]["world2screenMat"]["e10"]);
-			curCamParam1.push_back(cams[i]["world2screenMat"]["e11"]);
-			curCamParam1.push_back(cams[i]["world2screenMat"]["e12"]);
-			curCamParam1.push_back(cams[i]["world2screenMat"]["e13"]);
-			vector<double> curCamParam2;
-			curCamParam2.push_back(cams[i]["world2screenMat"]["e20"]);
-			curCamParam2.push_back(cams[i]["world2screenMat"]["e21"]);
-			curCamParam2.push_back(cams[i]["world2screenMat"]["e22"]);
-			curCamParam2.push_back(cams[i]["world2screenMat"]["e23"]);
-			vector<double> curCamParam3;
-			curCamParam3.push_back(cams[i]["world2screenMat"]["e30"]);
-			curCamParam3.push_back(cams[i]["world2screenMat"]["e31"]);
-			curCamParam3.push_back(cams[i]["world2screenMat"]["e32"]);
-			curCamParam3.push_back(cams[i]["world2screenMat"]["e33"]);
-
-			curCamParams.push_back(curCamParam0);
-			curCamParams.push_back(curCamParam1);
-			curCamParams.push_back(curCamParam2);
-			curCamParams.push_back(curCamParam3);
-
-			camParams.push_back(curCamParams);
-			//image
-
-			//remove first character
-			string imgName = cams[i]["img"][idx];
-
-			imgName = imgName.substr(1, imgName.size() - 1);
-
-			silhouetteImgs.push_back(imread(imgFolder + "/d" + imgName));
-
+		Mat verify(s, CV_8UC3, Scalar(0));
+		for (int w = 0; w < imgWidth; w++) {
+			for (int h = 0; h < imgHeigh; h++) {
+				uchar3 pixel = forceImg[i * imgWidth * imgHeigh + w * imgHeigh + h];
+				verify.at<Vec3b>(w, h)[0] = pixel.x;
+				verify.at<Vec3b>(w, h)[1] = pixel.y;
+				verify.at<Vec3b>(w, h)[2] = pixel.z;
+			}
 		}
 
+		imshow("test", verify);
+		waitKey(0);
+		*/
+
+
 	}
-	*/
-	//cout << "read complete" << endl;
-	//system("pause");
+
+	end_time = clock();
+	cout << "read img + json time : " << (float)(end_time - start_time) / (float)CLOCKS_PER_SEC << "s" << endl;
 
 	cout << "resolution : " << resolution << endl;
 
+
+	start_time = clock();
 	//copy data to device
 	float* gpuCamParams;
 	cudaMalloc(&gpuCamParams, camCount * 4 * 4 * sizeof(float));
@@ -257,6 +231,11 @@ string visualHull(int idx, Json cams) {
 	cudaCheckErrors("cuda malloc gpu img");
 	cudaMemcpy(gpuImgs, forceImg, camCount * imgHeigh * imgWidth * sizeof(uchar3), cudaMemcpyHostToDevice);
 
+	//allocate test space
+	/*
+	uchar3* gpuImgs_v;
+	cudaMalloc(&gpuImgs_v, camCount* imgWidth* imgHeigh * sizeof(uchar3));
+	*/
 
 	//alloc space for result(on GPU)
 	int* gpuResult;
@@ -264,30 +243,61 @@ string visualHull(int idx, Json cams) {
 	cudaCheckErrors("cuda malloc gpu result");
 	int threads_per_block = 128;
 	int blocks_per_grid = ceil(pow(resolution, 3) / threads_per_block);
+	end_time = clock();
+	cout << "cpu to gpu mem time : " << (float)(end_time - start_time) / (float)CLOCKS_PER_SEC << "s" << endl;
 
-	cout << "ready calc" << endl;
-	//system("pause");
 	//calc
 	clock_t* time;
 	cudaMalloc(&time, sizeof(clock_t));
+
+	start_time = clock();
 	checkVoxel << <blocks_per_grid, threads_per_block >> > (gpuCamParams, gpuImgs, gpuResult, resolution, camCount, time, imgWidth, imgHeigh);
-	cout << "calc" << endl;
+//	checkVoxel << <blocks_per_grid, threads_per_block >> > (gpuCamParams, gpuImgs, gpuResult, resolution, camCount, time, imgWidth, imgHeigh, gpuImgs_v);
+
+	//cout << "calc" << endl;
 	//system("pause");
 	//sync
 	cudaDeviceSynchronize();
 	cudaCheckErrors("cuda sync");
 
-	cout << "marching cube time : " << time << endl;
+	end_time = clock();
+	cout << "marching cube time : " << (float)(end_time-start_time)/ (float)CLOCKS_PER_SEC << "s" << endl;
+	//cudaMemcpy(&time_used, time, sizeof(clock_t),cudaMemcpyDeviceToHost);
+	//system("pause");
+	/*
+	uchar3* verifyImg = (uchar3*)malloc(camCount * imgWidth * imgHeigh * sizeof(uchar3));
+	cudaMemcpy(verifyImg, gpuImgs_v, camCount* imgHeigh* imgWidth * sizeof(uchar3), cudaMemcpyDeviceToHost);
+	for (int i = 0; i < camCount; i++) {
+
+		Mat verify(Size(imgWidth,imgHeigh), CV_8UC3, Scalar(0));
+		for (int w = 0; w < imgWidth; w++) {
+			for (int h = 0; h < imgHeigh; h++) {
+				uchar3 pixel = verifyImg[i * imgWidth * imgHeigh + w * imgHeigh + h];
+				verify.at<Vec3b>(w, h)[0] = pixel.x;
+				verify.at<Vec3b>(w, h)[1] = pixel.y;
+				verify.at<Vec3b>(w, h)[2] = pixel.z;
+			}
+		}
+		imshow("test", verify);
+		waitKey(0);
+	}
+	*/
 
 	//get result from gpu
+	start_time = clock();
 	int* localResult;
 	localResult = (int*)malloc(pow(resolution, 3) * sizeof(int));
 	cout << "ready copy" << endl;
 	cudaMemcpy(localResult, gpuResult, pow(resolution, 3) * sizeof(int), cudaMemcpyDeviceToHost);
 	cudaCheckErrors("cuda gpu result to cpu");
+	cudaDeviceSynchronize();
+	cudaCheckErrors("cuda sync");
+	end_time = clock();
+	cout << "gpu to cpu mem time : " << (float)(end_time - start_time) / (float)CLOCKS_PER_SEC << "s" << endl;
 	//save to txt to validate
+	
 	fstream file;
-	string fileName = "reader.txt";
+	string fileName = "reader_256.txt";
 	file.open(fileName, ios::out);
 	int t = 16;
 	for (int i = 0; i < pow(resolution, 3); i++) {
@@ -298,6 +308,7 @@ string visualHull(int idx, Json cams) {
 		file << localResult[i] << endl;
 		//cout << localResult[i] << endl;
 	}
+	
 	//cout << "save txt complete" << endl;
 	//TODO:
 	//render result
