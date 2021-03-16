@@ -122,7 +122,7 @@ string visualHull(int idx, Json cams) {
 	int imgWidth = 1024, imgHeigh = 1024;
 
 	int camCount = cams.size();
-	//camCount = 2;
+	camCount = 2;
 
 	//initial  
 	clock_t start_time = clock();
@@ -173,9 +173,9 @@ string visualHull(int idx, Json cams) {
 			cout << "read null" << endl;
 			system("pause");
 		}
-		/*
 		imshow("test", img);
 		waitKey(0);
+		/*
 		*/
 		cv::Size s = img.size();
 		imgWidth = s.width;
